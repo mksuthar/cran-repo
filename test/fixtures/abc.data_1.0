@@ -1,0 +1,6 @@
+Package: abc.data
+Version: 1.0
+Depends: R (>= 2.10)
+License: GPL (>= 3)
+MD5sum: 799079dbbdd0cfc9d9c61c3e35241806
+NeedsCompilation: no
