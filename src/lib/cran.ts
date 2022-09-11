@@ -1,4 +1,3 @@
-import fetch from 'node-fetch'
 import {
   parse_description,
   PackageDescription,
@@ -8,7 +7,9 @@ import * as zlib from 'zlib'
 import { Result } from './common'
 import { RPackage } from './model'
 import { extract, filter, TranformDebianControlChunks } from './utils'
-import _ from 'lodash'
+import * as _ from 'lodash';
+import any from 'promise.any';
+import got from 'got'
 
 export const DEFAULT_CRAN_URL = 'https://cran.r-project.org'
 export const DEFAULT_HTTP_AGENT = 'CranLikeRepository-agent'
@@ -45,29 +46,30 @@ export class CranLikeRepository {
    * @returns {PackageDescription[]} List of package description with version.
    */
   async getLatestPackageVersion(pkgName: string): Promise<PackageDescription[]> {
-    const pkgIndexURL = `${this.repoUrl}/src/contrib/PACKAGES`
-    const pkgIndexGzURL = `${this.repoUrl}/src/contrib/PACKAGES.gz`
+    const pkgIndexURL = `src/contrib/PACKAGES`
+    const pkgIndexGzURL = `src/contrib/PACKAGES.gz`
     const unzip = zlib.createUnzip()
 
     // Try to use compressed package index, if possible.
-    // Sometimes `PACKAGES.gz` may not be present - e.g. JFrog Artifactory, etc.
     let indexURL = pkgIndexGzURL
-    const hPkgIndexGzURL = await this.retrieve(indexURL, 'HEAD')
-    if (!hPkgIndexGzURL.ok) {
-      indexURL = pkgIndexURL
+    try {
+      await this.head(indexURL)
+    } catch (e) {
+      if (e instanceof got.HTTPError) {
+        // This is likely non-200 error code, indicating gzip'd package
+        // metadata does not exist
+        indexURL = pkgIndexURL;
+      } else {
+        // `got`'s error must be caught into generic Error.
+        // This is likely if host is not acessible, or other
+        // non http status code related errors.
+        throw new Error(`Cannot connect to: ${this.repoUrl}: ${e}`);
+      }
     }
 
-    const pkgsIndex = await this.retrieve(indexURL)
-    if (!pkgsIndex.ok) {
-      throw new Error(`unexpected response: ${pkgsIndex.statusText} when trying to read package index: ${indexURL}`)
-    }
-    if (!pkgsIndex.body) {
-      throw new Error(`expected body to be not null, for package index at: ${indexURL}`)
-    }
-
-    // Decompress if using gzip package index
+    const pkgsIndex = await this.stream(indexURL)
     const rawPkgIndexBody =
-      indexURL === pkgIndexURL ? pkgsIndex.body : pkgsIndex.body.pipe(unzip)
+      indexURL === pkgIndexURL ? pkgsIndex : pkgsIndex.pipe(unzip)
 
     function isPackage(r: Result<PackageDescription, ParseDescriptionMissingAttrError>) {
       if (r.success) {
@@ -77,6 +79,12 @@ export class CranLikeRepository {
       }
     }
 
+    // Although, in practice PACKAGES metadata will only keep latest version
+    // It is possible to create CRAN like repository with multiple versions
+    // (seperated by PATH attribute). In this case, return more than one entry
+    // and let consumer decide, which one is "latest".
+    // 
+    // If no package name exist in the index, return empty array.
     return await filter(
       rawPkgIndexBody.pipe(new TranformDebianControlChunks()),
       isPackage
@@ -94,53 +102,65 @@ export class CranLikeRepository {
    * @returns {RPackage} R Package
    */
   async resolvePackage(pkgName: string, pkgVersion: string): Promise<RPackage> {
-    const cranSrcUrl = `${this.repoUrl}/src/contrib/Archive/${pkgName}/${pkgName}_${pkgVersion}.tar.gz`
-    const artifactorySrcURL = `${this.repoUrl}/src/contrib/Archive/${pkgName}_${pkgVersion}.tar.gz`
-    const nexusSrcURL = `${this.repoUrl}/src/contrib/${pkgName}_${pkgVersion}.tar.gz`
 
-    const getPackage = async (url: string) => await this.mkRPackage(pkgName, url)
+    // Some commerical repository (artifcatory, and nexus) use different
+    // path scheme to store source archive. Try all possible path of source.
+    const possibleUrls = [
+      `src/contrib/Archive/${pkgName}/${pkgName}_${pkgVersion}.tar.gz`,
+      `src/contrib/Archive/${pkgName}_${pkgVersion}.tar.gz`,
+      `src/contrib/${pkgName}_${pkgVersion}.tar.gz`
+    ]
 
     try {
-      return await Promise.any([
-        getPackage(cranSrcUrl),
-        getPackage(artifactorySrcURL),
-        getPackage(nexusSrcURL)
-      ]);
+      const rPackage = await any(possibleUrls.map(u => this.mkRPackage(pkgName, u)));
+      return rPackage;
     } catch (err) {
-      throw new Error(`Failed to get package's source archive from: ${cranSrcUrl}, ${artifactorySrcURL}, ${nexusSrcURL}`)
+      throw new Error(`Failed to get valid package source archive from: ${possibleUrls.join(", ")}. Valid pacakge source must have DESCRIPTION file.`)
     }
   }
 
-  private async retrieve(url: string, method?: 'GET' | 'HEAD', headers?: Record<string, string>) {
+  private async stream(url: string) {
+    return got.stream(`${this.repoUrl}/${url}`, { headers: this.headers })
+  }
+
+  private async head(url: string) {
+    return got.head(`${this.repoUrl}/${url}`, { headers: this.headers, throwHttpErrors: true });
+  }
+
+  private get headers() {
+    let headers: Record<string, string> = {
+      agent: this.agent,
+    };
     if (this.user && this.pass) {
       headers = {
         ...headers,
-        Authorization: 'Basic ' + Buffer.from(this.user + ':' + this.pass).toString('base64'),
-        Agent: this.agent
+        'Authorization': 'Basic ' + Buffer.from(this.user + ':' + this.pass).toString('base64')
       }
     }
-    return fetch(url, { method, headers })
+    return headers;
   }
 
   private async mkRPackage(pkgName: string, url: string): Promise<RPackage> {
-    const resp = await this.retrieve(url)
-    if (!resp.ok) {
-      throw new Error(`recieved: ${resp.statusText}, from ${url}`)
+    try {
+      await this.head(url); // Errors from `got` have to be handled
+    } catch (e) {
+      if (e instanceof got.HTTPError) {
+        throw new Error(`Failed to retrieve: ${e.request.requestUrl}, code: ${e.code}, got: ${e.message}`);
+      }
+      throw new Error(`Failed to retrieve: ${this.repoUrl}/${url}, error: ${e}`);
     }
 
-    // Read description from source archive
+    const resp = await this.stream(url);
     const unGzip = zlib.createGunzip()
-    const description = await extract(resp.body.pipe(unGzip), `${pkgName}/DESCRIPTION`)
+    const description = await extract(resp.pipe(unGzip), `${pkgName}/DESCRIPTION`)
     const pkg = parse_description(description.toString('utf-8'))
     if (!pkg.success) {
-      throw new Error(`recieved: ${resp.statusText}, from ${url}`)
+      throw new Error(`Could not parse DESCRIPTION file in source archive: ${this.repoUrl}/${url}`)
     }
 
     return {
       description: pkg.value,
-      source_download_url: url
+      source_download_url: `${this.repoUrl}/${url}`,
     }
   }
 }
-
-//

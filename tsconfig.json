@@ -1,12 +1,10 @@
 {
   "compilerOptions": {
-    "target": "es2021",
-    "module": "CommonJS",
+    "module": "commonjs",
+    "target": "es6",
     "declaration": true,
     "outDir": "./dist",
     "strict": true,
-    "esModuleInterop": true
-  },
-  "include": ["src"],
-  "exclude": ["node_modules", "**/*.spec.ts", "test"]
+    "esModuleInterop": true,
+  }
 }

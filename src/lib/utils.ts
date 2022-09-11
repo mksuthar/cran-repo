@@ -1,8 +1,7 @@
-import concat from 'concat-stream'
-import { Transform, TransformCallback } from 'stream'
-import { Parse as TarParser } from 'tar'
-import { Result } from './common'
-import { parse_description } from './description'
+import { Stream, Transform, TransformCallback } from 'stream';
+import { Parse as TarParser } from 'tar';
+import { Result } from './common';
+import { parse_description } from './description';
 
 /**
  * Extracts a file from tarball into buffer.
@@ -14,17 +13,19 @@ import { parse_description } from './description'
  * Reference: https://github.com/npm/node-tar/issues/181
  */
 export async function extract(tarball: NodeJS.ReadableStream, filePath: string): Promise<Buffer> {
-    return await new Promise<Buffer>((resolve, reject) => {
+    return new Promise<Buffer>((resolve, reject) => {
         let success = false
         const parser = new TarParser({
             strict: true,
             filter: (currentPath: string) => {
                 const isMatch = currentPath === filePath
-                if (isMatch) success = true
+                if (isMatch) {
+                    success = true
+                }
                 return isMatch
             },
-            onentry: (entry) => entry.pipe(concat(resolve))
-        })
+            onentry: (entry) => resolve(stream2buffer(entry))
+        });
         tarball
             .pipe(parser)
             .on('end', () => {
@@ -104,4 +105,14 @@ export async function filter<T, E>(
         stream.on('error', (err: Error) => reject(err))
         stream.on('end', () => resolve(chunks))
     })
+}
+
+async function stream2buffer(stream: Stream): Promise<Buffer> {
+    return new Promise<Buffer>((resolve, reject) => {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const raw: any[] = [];
+        stream.on("data", chunk => raw.push(chunk));
+        stream.on("end", () => resolve(Buffer.concat(raw)));
+        stream.on("error", err => reject(`Failed to convert stream: ${err}`));
+    });
 }
