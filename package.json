@@ -1,0 +1,61 @@
+{
+  "name": "cran-repo",
+  "version": "0.0.1",
+  "description": "Provides package discovery function against Cran like repository.",
+  "scripts": {
+    "build": "tsc",
+    "lint": "eslint src --fix",
+    "test": "jest --clearCache && jest --detectOpenHandles"
+  },
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.js",
+  "files": [
+    "dist"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "keywords": [
+    "cran",
+    "r-lang",
+    "cran repository"
+  ],
+  "author": "meghss@protonmail.com",
+  "license": "MIT",
+  "dependencies": {
+    "got": "^11.8.0",
+    "lodash": "^4.17.21",
+    "promise.any": "^2.0.4",
+    "tar": "^6.1.11",
+    "zlib": "^1.0.5"
+  },
+  "devDependencies": {
+    "@types/jest": "^27.4.0",
+    "@types/lodash": "^4.14.184",
+    "@types/node": "^18.7.16",
+    "@types/promise.any": "^2.0.0",
+    "@types/tar": "^6.1.2",
+    "@typescript-eslint/eslint-plugin": "^5.36.2",
+    "eslint": "^8.23.0",
+    "eslint-config-standard-with-typescript": "^22.0.0",
+    "eslint-plugin-import": "^2.26.0",
+    "eslint-plugin-n": "^15.2.5",
+    "eslint-plugin-promise": "^6.0.1",
+    "jest": "^27.5.1",
+    "ts-jest": "^27.1.3",
+    "ts-node": "^10.7.0",
+    "typescript": "^4.8.3"
+  },
+  "jest": {
+    "preset": "ts-jest",
+    "moduleFileExtensions": [
+      "js",
+      "ts"
+    ],
+    "rootDir": "src",
+    "transform": {
+      "^.+\\.(t|j)s$": "ts-jest"
+    }
+  }
+}
